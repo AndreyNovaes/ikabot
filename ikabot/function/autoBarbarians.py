@@ -36,6 +36,24 @@ from ikabot.function.attackBarbarians import (
 )
 
 
+
+# Barcos necessários por nível de vila bárbara (baseado em recursos disponíveis)
+BARBARIAN_SHIPS_BY_LEVEL = {
+    1: 1, 2: 2, 3: 2, 4: 2, 5: 3, 6: 4, 7: 4, 8: 5, 9: 7,
+    10: 8, 11: 10, 12: 12, 13: 15, 14: 18, 15: 21,
+    16: 25, 17: 29, 18: 34, 19: 38,
+    # Para níveis acima de 19, usar fórmula conservadora
+}
+
+def get_ships_for_barbarian_level(level):
+    """Retorna número de barcos necessários para saquear vila bárbara do nível especificado."""
+    if level in BARBARIAN_SHIPS_BY_LEVEL:
+        return BARBARIAN_SHIPS_BY_LEVEL[level]
+    # Para níveis acima de 19, usar fórmula: (nivel - 10) * 2
+    return max(40, (level - 10) * 2)
+
+
+
 DEFAULT_SCHEMATICS = {
     "WITH_HEPHAESTUS": [
         # TODO Develop the preset here for when Hephaestus is available
@@ -43,31 +61,25 @@ DEFAULT_SCHEMATICS = {
     "WITHOUT_HEPHAESTUS": [
         {
             "level": (1, 9),
-            "looting": {"from_float": False, "units": {"302": 1}},
-            "needed_units": {"main": {"302": 90, "304": 21}},
+            "looting": {"from_float": False, "units": {"313": 20}},
+            "needed_units": {"main": {"302": 60, "303": 90, "306": 50}},
             "waves": {
                 "1": {
-                    "send": [{"from_float": False, "units": {"302": 90, "304": 21}}],
+                    "send": [{"from_float": False, "units": {"302": 60, "303": 90, "306": 50}}],
                 }
             },
         },
         {
             "level": (10, 19),
-            "looting": {"from_float": False, "units": {"305": 12, "308": 50}},
-            "needed_units": {"main": {"302": 60, "304": 35, "305": 12, "308": 50}},
+            "looting": {"from_float": False, "units": {"313": 20}},
+            "needed_units": {"main": {"302": 60, "303": 150, "306": 12, "313": 50}},
             "waves": {
                 "1": {
-                    "send": [
-                        {
-                            "from_float": False,
-                            "units": {"302": 60, "304": 35, "305": 12, "308": 50},
-                        },
-                    ],
-                },
+                    "send": [{"from_float": False, "units": {"302": 60, "303": 150, "306": 12, "313": 50}}],
+                }
             },
         },
-        {
-            "level": (20, 29),
+        {"level": (20, 29),
             "looting": {"from_float": False, "units": {"305": 12, "308": 100}},
             "needed_units": {
                 "main": {
@@ -231,10 +243,23 @@ def autoBarbarians(session, event, stdin_fd, predetermined_input):
                 pass
 
         banner()
+        # Filtrar schematic para o nível correto
+        html = session.get(island_url + island["id"])
+        temp_island = getIsland(html)
+        temp_barb_info = get_barbarians_lv(session, temp_island, ship_capacity)
+        temp_barb_level = int(temp_barb_info["level"])
+        filtered_schematic = None
+        for sch in schematic:
+            if isinstance(sch["level"], (tuple, list)):
+                if temp_barb_level in range(sch["level"][0], sch["level"][1] + 1):
+                    filtered_schematic = sch
+                    break
+        schematic_to_use = [filtered_schematic] if filtered_schematic else schematic
+        
         success, schematic_informations = get_schematic_information(
             session,
             city,
-            schematic,
+            schematic_to_use,
             ship_capacity,
             is_in_island=True if city["islandId"] == island["id"] else False,
         )
@@ -543,19 +568,29 @@ def get_barbarians_attack_plan(barbarians_info, schematic):
         return
 
     return {
-        "waves": scheme["waves"],
-        "looting": scheme["looting"],
-        "needed_units": get_max_schematics_units(scheme),
+        "waves": selected_scheme["waves"],
+        "looting": selected_scheme["looting"],
+        "needed_units": get_max_schematics_units(selected_scheme),
     }
 
 
-def get_amount_ships_schematic(schematic_units, units_data, ship_capacity):
+def get_amount_ships_schematic(schematic_units, units_data, ship_capacity, barbarian_level=None):
+    # Se temos o nível do bárbaro, usar tabela otimizada
+    if barbarian_level is not None:
+        ships_for_loot = get_ships_for_barbarian_level(barbarian_level)
+        # Calcular barcos para tropas
+        schematic_weight = 0.0
+        for unit_id, amount in schematic_units.items():
+            schematic_weight += amount * units_data[str(unit_id)]["weight"]
+        ships_for_troops = math.ceil(Decimal(schematic_weight) / Decimal(ship_capacity))
+        # Retornar o maior entre tropas e saque
+        return max(ships_for_troops, ships_for_loot)
+    
+    # Fallback para lógica antiga se não temos nível
     schematic_weight = 0.0
     schematic_ships = 2
-
     for unit_id, amount in schematic_units.items():
         schematic_weight += amount * units_data[str(unit_id)]["weight"]
-
     schematic_ships += math.ceil(Decimal(schematic_weight) / Decimal(ship_capacity))
     return schematic_ships
 
@@ -590,6 +625,7 @@ def do_it(session, island, city, float_city, schematic, units_data, ship_capacit
         island = getIsland(html)
         babarians_info = get_barbarians_lv(session, island, ship_capacity)
         barbarians_plan = get_barbarians_attack_plan(babarians_info, schematic)
+        print(f"DEBUG barbarians_plan: {barbarians_plan}")
         if barbarians_plan is None:
             sendToBot(
                 session,
