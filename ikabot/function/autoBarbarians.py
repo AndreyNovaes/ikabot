@@ -61,21 +61,21 @@ DEFAULT_SCHEMATICS = {
     "WITHOUT_HEPHAESTUS": [
         {
             "level": (1, 9),
-            "looting": {"from_float": False, "units": {"313": 20}},
-            "needed_units": {"main": {"302": 60, "303": 90, "306": 50}},
+            "looting": {"from_float": False, "units": {"304": 5}},
+            "needed_units": {"main": {"303": 90}},
             "waves": {
                 "1": {
-                    "send": [{"from_float": False, "units": {"302": 60, "303": 90, "306": 50}}],
+                    "send": [{"from_float": False, "units": {"303": 90}}],
                 }
             },
         },
         {
             "level": (10, 19),
-            "looting": {"from_float": False, "units": {"313": 20}},
-            "needed_units": {"main": {"302": 60, "303": 150, "306": 12, "313": 50}},
+            "looting": {"from_float": False, "units": {"304": 5}},
+            "needed_units": {"main": {"302": 60, "303": 150, "304": 12}},
             "waves": {
                 "1": {
-                    "send": [{"from_float": False, "units": {"302": 60, "303": 150, "306": 12, "313": 50}}],
+                    "send": [{"from_float": False, "units": {"302": 60, "303": 150, "304": 12}}],
                 }
             },
         },
@@ -583,8 +583,9 @@ def get_amount_ships_schematic(schematic_units, units_data, ship_capacity, barba
         for unit_id, amount in schematic_units.items():
             schematic_weight += amount * units_data[str(unit_id)]["weight"]
         ships_for_troops = math.ceil(Decimal(schematic_weight) / Decimal(ship_capacity))
+        result = max(ships_for_troops, ships_for_loot)
         # Retornar o maior entre tropas e saque
-        return max(ships_for_troops, ships_for_loot)
+        return result
     
     # Fallback para lógica antiga se não temos nível
     schematic_weight = 0.0
@@ -649,12 +650,11 @@ def do_it(session, island, city, float_city, schematic, units_data, ship_capacit
             wait_for_looting(session, city, island)
             continue
         ships_available = waitForArrival(session)
-        schematic_ships = (
-            get_amount_ships_schematic(
-                barbarians_plan["needed_units"]["total"], units_data, ship_capacity
-            )
-            + babarians_info["ships"]
+        barbarian_level = int(babarians_info.get("level", 0))
+        schematic_ships_calc = get_amount_ships_schematic(
+            barbarians_plan["needed_units"]["total"], units_data, ship_capacity, barbarian_level
         )
+        schematic_ships = schematic_ships_calc + babarians_info["ships"]
         if schematic_ships > ships_available:
             attempts["ships"] += 1
             session.setStatus(
@@ -792,14 +792,12 @@ def do_attack(session, island, city, schematic, ship_capacity, float_city=None, 
         looting_wave = True if len(schematic["waves"]) == i else False
 
         if looting_wave:
+            # CORRIGIDO: usar apenas barcos necessários, não todos disponíveis
+            loot_ships = babarians_info["ships"]
             if len(main_city_data) > 0:
-                main_city_data[0]["attack_data"]["transporter"] = max(
-                    babarians_info["ships"], ships_available
-                )
+                main_city_data[0]["attack_data"]["transporter"] = loot_ships
             elif len(float_attack_data) > 0:
-                float_attack_data[0]["attack_data"]["transporter"] = max(
-                    babarians_info["ships"], ships_available
-                )
+                float_attack_data[0]["attack_data"]["transporter"] = loot_ships
 
         if isinstance(main_city_data, list) and len(main_city_data) > 0:
             for data in main_city_data:
